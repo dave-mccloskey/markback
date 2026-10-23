@@ -178,6 +178,7 @@
 }
 
 .markback-bubble-submit {
+  display: inline-block;
   padding: 3px 12px;
   font-size: 12px;
   font-family: var(--vscode-font-family, system-ui, sans-serif);
@@ -186,8 +187,11 @@
   border: 1px solid var(--vscode-button-border, transparent);
   border-radius: 3px;
   cursor: pointer;
+  text-decoration: none;
 }
 
-.markback-bubble-submit:hover {
+.markback-bubble-submit:hover,
+.markback-bubble-submit:focus {
   background-color: var(--vscode-button-hoverBackground, #1177bb);
+  text-decoration: none;
 }

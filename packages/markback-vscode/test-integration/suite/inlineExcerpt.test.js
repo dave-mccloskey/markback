@@ -116,7 +116,7 @@ describe("#10 — inline excerpt in generated .mb", function () {
       await fs.writeFile(src, lines + "\n", "utf8");
       await fs.writeFile(
         `${src}.mb`,
-        "%markback 2\n\n@id seed2\n@file ./" + path.basename(src) + ":1:1-1:4 <<< existing\n",
+        "%markback 2\n\n@id seed2\n@file ./" + path.basename(src) + ":5:1-5:4 <<< existing\n",
         "utf8",
       );
       const uri = vscode.Uri.file(src);

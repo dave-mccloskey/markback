@@ -10,7 +10,7 @@
 //  - Detect untrusted-workspace state and signal the user when
 //    command URI clicks would silently fail (v0.2.1).
 //
-// One-way bridge to the extension via command: URI navigation.
+// One-way bridge through the extension URI handler (command: links are blocked).
 
 // Pure helper (no DOM): given a textarea value and a caret index, return the
 // index to which an Alt+Backspace word-delete should extend leftward — i.e.
@@ -54,17 +54,14 @@ function markbackWordDeleteStart(text, caret) {
     showTrustBanner();
   }
 
-  var PAYLOAD = readPayload();
-  if (PAYLOAD && PAYLOAD.records && PAYLOAD.records.length > 0) {
-    renderBadges(PAYLOAD.records);
-  }
-
   var BUTTON_ID = "markback-preview-button";
   var button = null;
 
   document.addEventListener("mouseup", onMouseUp, true);
   document.addEventListener("mousedown", onMouseDown, true);
   document.addEventListener("selectionchange", scheduleMaybeShow);
+  window.addEventListener("vscode.markdown.updateContent", refreshPayloadDecorations);
+  watchInitialPreviewHydration();
 
   function onMouseDown(e) {
     if (!button) return;
@@ -148,6 +145,15 @@ function markbackWordDeleteStart(text, caret) {
     return { startLine: startLine, endLine: endLine };
   }
 
+  function previewUri(action, args) {
+    var payload = readPayload();
+    if (!payload || !payload.endpoint) return null;
+    var url = new URL(payload.endpoint);
+    url.searchParams.set("action", action);
+    url.searchParams.set("args", JSON.stringify(args));
+    return url.toString();
+  }
+
   function showButton(range, lines, selectionText) {
     if (!button) {
       button = document.createElement("a");
@@ -165,14 +171,14 @@ function markbackWordDeleteStart(text, caret) {
     button.style.top = top + "px";
     button.style.left = left + "px";
 
-    var args = [{
+    var args = {
       sourceUri: SOURCE_URI,
       startLine: lines.startLine,
       endLine: lines.endLine,
       selectionText: truncate(selectionText, 200),
-    }];
-    var href = "command:markback.previewComment?" +
-      encodeURIComponent(JSON.stringify(args));
+    };
+    var href = previewUri("previewComment", args);
+    if (!href) { removeButton(); return; }
     button.setAttribute("href", href);
   }
 
@@ -196,10 +202,51 @@ function markbackWordDeleteStart(text, caret) {
     var el = document.getElementById("markback-preview-data");
     if (!el) return null;
     try {
-      return JSON.parse(el.textContent || "{}");
+      return JSON.parse(el.getAttribute("data-payload") || "{}");
     } catch (e) {
       console.log("[markback] failed to parse preview-data payload:", e);
       return null;
+    }
+  }
+
+  function watchInitialPreviewHydration() {
+    var root = document.documentElement || document;
+    if (typeof MutationObserver === "undefined") {
+      if (document.readyState === "loading" || document.readyState === "uninitialized") {
+        document.addEventListener("DOMContentLoaded", refreshPayloadDecorations, { once: true });
+      } else {
+        refreshPayloadDecorations();
+      }
+      return;
+    }
+
+    var observer = new MutationObserver(function () {
+      if (!hasInitialPreviewContent()) return;
+      observer.disconnect();
+      refreshPayloadDecorations();
+    });
+    observer.observe(root, { childList: true, subtree: true });
+    if (hasInitialPreviewContent()) {
+      observer.disconnect();
+      refreshPayloadDecorations();
+    }
+  }
+
+  function hasInitialPreviewContent() {
+    return !!document.getElementById("markback-preview-data") &&
+      !!document.querySelector(".markdown-body");
+  }
+
+  function refreshPayloadDecorations() {
+    var badges = document.querySelectorAll(".markback-badge");
+    for (var i = 0; i < badges.length; i++) {
+      if (badges[i].parentNode) badges[i].parentNode.removeChild(badges[i]);
+    }
+    dismissBubble();
+
+    var payload = readPayload();
+    if (payload && payload.records && payload.records.length > 0) {
+      renderBadges(payload.records);
     }
   }
 
@@ -362,8 +409,7 @@ function markbackWordDeleteStart(text, caret) {
     openLink.className = "markback-bubble-action";
     openLink.textContent = "Open in .mb";
     openLink.setAttribute("href",
-      "command:markback.previewOpenSidecar?" +
-      encodeURIComponent(JSON.stringify([{ sourceUri: SOURCE_URI, recordId: group.parent.id }])));
+      previewUri("previewOpenSidecar", { sourceUri: SOURCE_URI, recordId: group.parent.id }) || "#");
     footer.appendChild(openLink);
 
     bubble.appendChild(footer);
@@ -411,46 +457,37 @@ function markbackWordDeleteStart(text, caret) {
     hint.textContent = "Enter to send · Shift+Enter newline · Alt+Backspace deletes a word";
     row.appendChild(hint);
 
-    var submit = document.createElement("button");
+    var submit = document.createElement("a");
     submit.className = "markback-bubble-submit";
-    submit.type = "button";
+    submit.setAttribute("role", "button");
     submit.textContent = "Reply";
     row.appendChild(submit);
 
     wrap.appendChild(row);
 
-    function send() {
+    function updateReplyHref() {
       var text = (input.value || "").trim();
-      if (text.length === 0) return;
       if (text.length > 2000) {
         // Command URIs encode all args; keep the URL manageable.
         text = text.slice(0, 2000);
       }
-      var url = "command:markback.previewReply?" +
-        encodeURIComponent(JSON.stringify([{
+      var url = previewUri("previewReply", {
           sourceUri: SOURCE_URI,
           parentId: group.parent.id,
           text: text,
-        }]));
-      // Trigger the command via location navigation; webview intercepts.
-      try {
-        window.location.href = url;
-      } catch (e) {
-        console.log("[markback] previewReply navigation failed:", e);
-      }
-      dismissBubble();
+        });
+      if (url && text.length > 0) submit.setAttribute("href", url);
+      else submit.removeAttribute("href");
     }
 
-    submit.addEventListener("click", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      send();
-    });
+    input.addEventListener("input", updateReplyHref);
+    updateReplyHref();
 
     input.addEventListener("keydown", function (e) {
       if ((e.key === "Enter" || e.keyCode === 13) && !e.shiftKey) {
         e.preventDefault();
-        send();
+        updateReplyHref();
+        if (submit.hasAttribute("href")) submit.click();
         return;
       }
       // Alt+Backspace deletes the previous word. A plain webview <textarea>

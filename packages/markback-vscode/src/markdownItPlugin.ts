@@ -16,20 +16,20 @@ type PreviewRecord = {
 
 type PreviewPayload = {
   records: PreviewRecord[];
+  endpoint?: string;
 };
 
-export function buildMarkdownItPlugin(logger: OutputLogger | null) {
+export function buildMarkdownItPlugin(logger: OutputLogger | null, endpoint?: string) {
   return function markbackPlugin(md: any) {
-    md.core.ruler.push("markback_embed_records", (state: any) => {
-      const sourceUri = resolveSourceFromEnv(state.env);
-      if (!sourceUri) return false;
-      const payload = loadPayload(sourceUri, logger);
-      const script = renderScriptTag(payload);
-      const token = new state.Token("html_block", "", 0);
-      token.content = script;
-      state.tokens.unshift(token);
-      return true;
-    });
+    // VS Code tokenizes without a document URI, then supplies it to render.
+    // Read sidecars here so cached tokens also pick up newly saved comments.
+    const render = md.renderer.render.bind(md.renderer);
+    md.renderer.render = (tokens: any, options: any, env: any) => {
+      const html = render(tokens, options, env);
+      const sourceUri = resolveSourceFromEnv(env);
+      if (!sourceUri) return html;
+      return renderPayloadElement({ ...loadPayload(sourceUri, logger), endpoint }) + html;
+    };
   };
 }
 
@@ -101,9 +101,15 @@ function projectRecord(r: Record, sourceFsPath: string, sidecarDir: string): Pre
   };
 }
 
-function renderScriptTag(payload: PreviewPayload): string {
-  // Defensive against `</script>` substrings inside record bodies.
-  const json = JSON.stringify(payload).replace(/<\/(script)/gi, "<\\/$1");
-  return `<script id="markback-preview-data" type="application/json">${json}</script>\n`;
+function renderPayloadElement(payload: PreviewPayload): string {
+  // VS Code recreates script elements as it inserts rendered Markdown HTML,
+  // preserving only a short allowlist of attributes that omits `id`. Keep the
+  // JSON in an escaped data attribute so the preview consumer can still find it.
+  const json = JSON.stringify(payload)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  return `<div id="markback-preview-data" hidden data-payload="${json}"></div>\n`;
 }
 

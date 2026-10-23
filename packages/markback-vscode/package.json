@@ -311,7 +311,9 @@
     "esbuild": "^0.28.0",
     "glob": "^11.1.0",
     "https-proxy-agent": "^7.0.6",
+    "jsdom": "^26.1.0",
     "markbackjs": "file:../markbackjs",
+    "markdown-it": "^15.0.3",
     "mocha": "^10.8.2",
     "typescript": "^5.4.0"
   }
